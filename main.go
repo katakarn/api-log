@@ -1,49 +1,28 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/olivere/elastic"
+	"github.com/grafana/loki-client-go"
+	"golang.org/x/net/context"
 )
 
-var (
-	elasticsearchURL = "http://elasticsearch:9200"
-	indexName         = "api_logs"
-)
-
-type logEntry struct {
-	RequestTime    time.Time `json:"request_time"`
-	RequestMethod  string    `json:"request_method"`
-	RequestPath    string    `json:"request_path"`
-	ResponseStatus int       `json:"response_status"`
-}
+var lokiURL = "http://loki:3100"
 
 func main() {
 	router := mux.NewRouter()
 	router.HandleFunc("/your-endpoint", logMiddleware(apiHandler)).Methods("GET")
 
-	log.Fatal(http.ListenAndServe(":8080", router))
+	http.Handle("/", router)
+	http.ListenAndServe(":8080", nil)
 }
 
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	// ตอบกลับ response
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
-
-	// บันทึก log ใน Elasticsearch
-	logData := logEntry{
-		RequestTime:    time.Now(),
-		RequestMethod:  r.Method,
-		RequestPath:    r.URL.Path,
-		ResponseStatus: http.StatusOK,
-	}
-
-	saveLogToElasticsearch(logData)
 }
 
 func logMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -52,33 +31,32 @@ func logMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		next(w, r)
 
-		// บันทึก log ของ request
-		logData := logEntry{
-			RequestTime:    startTime,
-			RequestMethod:  r.Method,
-			RequestPath:    r.URL.Path,
-			ResponseStatus: http.StatusOK,
+		// บันทึก log ใน Loki
+		logData := map[string]string{
+			"request_method":  r.Method,
+			"request_path":    r.URL.Path,
+			"response_status": "200",
 		}
 
-		saveLogToElasticsearch(logData)
-	}
-}
+		// Config Loki client
+		cfg := loki.Config{
+			URL:        lokiURL,
+			BatchWait:  5 * time.Second,
+			BatchSize:  100,
+			Labels:     logData,
+		}
 
-func saveLogToElasticsearch(logData logEntry) {
-	client, err := elastic.NewClient(elastic.SetURL(elasticsearchURL))
-	if err != nil {
-		log.Println(err)
-		return
-	}
+		client, err := loki.New(cfg)
+		if err != nil {
+			// Handle error
+			return
+		}
 
-	ctx := context.Background()
+		// Create context
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	_, err = client.Index().
-		Index(indexName).
-		BodyJson(logData).
-		Do(ctx)
-	if err != nil {
-		log.Println(err)
-		return
+		// Log to Loki
+		client.PushMessage(ctx, "API Request", startTime, logData)
 	}
 }
