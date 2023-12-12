@@ -1,62 +1,39 @@
 package main
 
 import (
-	"net/http"
-	"time"
+    "net/http"
+    "os"
 
-	"github.com/gorilla/mux"
-	"github.com/grafana/loki-client-go"
-	"golang.org/x/net/context"
+    "github.com/gin-gonic/gin"
+    "github.com/grafana/loki-client-go/loghttp"
+    "github.com/sirupsen/logrus"
 )
 
-var lokiURL = "http://loki:3100"
-
 func main() {
-	router := mux.NewRouter()
-	router.HandleFunc("/your-endpoint", logMiddleware(apiHandler)).Methods("GET")
+    // Set up Logrus with JSON formatter
+    logrus.SetFormatter(&logrus.JSONFormatter{})
 
-	http.Handle("/", router)
-	http.ListenAndServe(":8080", nil)
-}
+    // Set up Loki as logrus hook
+    hook, err := loghttp.New("http://loki:3100/loki/api/v1/push", "myapp")
+    if err != nil {
+        logrus.Fatal(err)
+    }
+    defer hook.Flush()
+    logrus.AddHook(hook)
 
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-	// ตอบกลับ response
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
-}
+    // Set up Gin router
+    router := gin.Default()
 
-func logMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		startTime := time.Now()
+    // Endpoint for testing logging
+    router.GET("/log", func(c *gin.Context) {
+        logrus.Info("This is an info log from /log endpoint.")
+        c.JSON(http.StatusOK, gin.H{"message": "Log sent to Loki successfully."})
+    })
 
-		next(w, r)
-
-		// บันทึก log ใน Loki
-		logData := map[string]string{
-			"request_method":  r.Method,
-			"request_path":    r.URL.Path,
-			"response_status": "200",
-		}
-
-		// Config Loki client
-		cfg := loki.Config{
-			URL:        lokiURL,
-			BatchWait:  5 * time.Second,
-			BatchSize:  100,
-			Labels:     logData,
-		}
-
-		client, err := loki.New(cfg)
-		if err != nil {
-			// Handle error
-			return
-		}
-
-		// Create context
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		// Log to Loki
-		client.PushMessage(ctx, "API Request", startTime, logData)
-	}
+    // Start the server
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+    router.Run(":" + port)
 }
