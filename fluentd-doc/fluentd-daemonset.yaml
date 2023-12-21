@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      k8s-app: fluentd-logging  # แก้ไขให้ตรงกับ labels ใน template
+  template:
+    metadata:
+      labels:
+        k8s-app: fluentd-logging  # แก้ไขให้ตรงกับ selector
+    spec:
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+      containers:
+      - name: fluentd
+        image: fluent/fluentd:v0.12-debian
+        env:
+          - name: FLUENTD_ARGS
+            value: -c /fluentd/etc/fluent.conf
+        volumeMounts:
+        - name: config-volume
+          mountPath: /fluentd/etc
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: config-volume
+        configMap:
+          name: fluentd-conf
