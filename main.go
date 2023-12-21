@@ -1,39 +1,92 @@
 package main
 
 import (
-    "net/http"
-    "os"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
 
-    "github.com/gin-gonic/gin"
-    "github.com/grafana/loki-client-go/loghttp"
-    "github.com/sirupsen/logrus"
+	_ "github.com/lib/pq"
 )
 
+const (
+	host     = "localhost"
+	port     = 5432
+	user     = "admin"
+	password = "password"
+	dbname   = "log"
+)
+
+type User struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func getUsersHandler(w http.ResponseWriter, r *http.Request) {
+	// สร้าง connection string
+	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+
+	// เชื่อมต่อฐานข้อมูล
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	// Query ข้อมูล
+	rows, err := db.Query("SELECT id, username, password FROM users")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	// สร้าง slice เพื่อเก็บข้อมูล users
+	var users []User
+
+	// Loop ผลลัพธ์และเก็บข้อมูลใน slice
+	for rows.Next() {
+		var user User
+		err := rows.Scan(&user.ID, &user.Username, &user.Password)
+		if err != nil {
+			log.Fatal(err)
+		}
+		users = append(users, user)
+	}
+
+	// ตรวจสอบ error ที่เกิดในการวนลูป
+	err = rows.Err()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// แปลงข้อมูลเป็น JSON และส่งไปยัง client
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(users)
+}
+
+func logHandler(w http.ResponseWriter, r *http.Request) {
+	// ตัวอย่างการใช้ log
+	log.Println("Received a log request")
+
+	// ตัวอย่างการใช้ fmt.Fprintln เพื่อเขียนข้อความลงใน response
+	fmt.Fprintln(w, "Log request received")
+}
+
 func main() {
-    // Set up Logrus with JSON formatter
-    logrus.SetFormatter(&logrus.JSONFormatter{})
+	log.Println("Starting server...")
+	// health check
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Hello World!")
+	})
 
-    // Set up Loki as logrus hook
-    hook, err := loghttp.New("http://loki:3100/loki/api/v1/push", "myapp")
-    if err != nil {
-        logrus.Fatal(err)
-    }
-    defer hook.Flush()
-    logrus.AddHook(hook)
+	// Handle GET request for "/users"
+	http.HandleFunc("/users", getUsersHandler)
 
-    // Set up Gin router
-    router := gin.Default()
+	// Handle GET request for "/log"
+	http.HandleFunc("/log", logHandler)
 
-    // Endpoint for testing logging
-    router.GET("/log", func(c *gin.Context) {
-        logrus.Info("This is an info log from /log endpoint.")
-        c.JSON(http.StatusOK, gin.H{"message": "Log sent to Loki successfully."})
-    })
-
-    // Start the server
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080"
-    }
-    router.Run(":" + port)
+	// Start the server
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
