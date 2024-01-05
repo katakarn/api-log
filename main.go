@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	host     = "localhost"
+	host     = "postgres-service"
 	port     = 5432
 	user     = "admin"
 	password = "password"
@@ -27,7 +27,7 @@ type User struct {
 func getUsersHandler(w http.ResponseWriter, r *http.Request) {
 	// สร้าง connection string
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
-
+	fmt.Println(connStr)
 	// เชื่อมต่อฐานข้อมูล
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
